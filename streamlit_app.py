@@ -34,12 +34,29 @@ Simply provide a YouTube video ID and ask questions about the video's transcript
 # Sidebar for configuration
 st.sidebar.header("⚙️ Configuration")
 
-# Video ID input
-video_id = st.sidebar.text_input(
-    "Enter YouTube Video ID",
-    value="6S59Y0ckTm4",
-    help="The unique identifier found in YouTube URLs (e.g., 'watch?v=VIDEO_ID')"
+# Video ID or Link input
+youtube_input = st.sidebar.text_input(
+    "Enter YouTube Link or Video ID",
+    value="https://www.youtube.com/watch?v=6S59Y0ckTm4",
+    help="You can paste the full YouTube URL (e.g., 'https://www.youtube.com/watch?v=...' or 'https://youtu.be/...') or just the 11-character Video ID."
 )
+
+import re
+def extract_video_id(url_or_id):
+    if not url_or_id:
+        return None
+    # Regex to capture 11-char YouTube video ID from various URL formats
+    regex = r'(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})'
+    match = re.search(regex, url_or_id)
+    if match:
+        return match.group(1)
+    
+    clean_id = url_or_id.strip()
+    if len(clean_id) == 11 and re.match(r'^[a-zA-Z0-9_-]{11}$', clean_id):
+        return clean_id
+    return None
+
+video_id = extract_video_id(youtube_input)
 
 # Session state for caching
 if "vector_store" not in st.session_state:
@@ -101,7 +118,7 @@ if load_button or (st.session_state.current_video_id == video_id and st.session_
             except Exception as e:
                 st.error(f"❌ Error: {str(e)}")
     else:
-        st.warning("Please enter a video ID")
+        st.sidebar.error("❌ Invalid YouTube Link or Video ID. Please check the URL.")
 
 # Main content area
 if st.session_state.rag_chain:
