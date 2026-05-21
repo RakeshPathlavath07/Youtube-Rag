@@ -8,19 +8,28 @@ Original file is located at
 """
 
 import os
-os.environ["OPENAI_API_KEY"] = "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"
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Get API keys from environment variables
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "your_openai_api_key_here")
+HUGGINGFACE_TOKEN = os.getenv("HUGGINGFACE_TOKEN", "your_huggingface_token_here")
+
+os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
 
 from huggingface_hub import login
-login("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")
+login(HUGGINGFACE_TOKEN)
 
 """## Install libraries"""
 
-!pip install -q youtube-transcript-api langchain-community langchain-openai \
-               faiss-cpu tiktoken python-dotenv
+# !pip install -q youtube-transcript-api langchain-community langchain-openai \
+#                faiss-cpu tiktoken python-dotenv
 
-pip install langchain-huggingface
+# pip install langchain-huggingface
 
-!pip install -U langchain-text-splitters
+# !pip install -U langchain-text-splitters
 
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -42,33 +51,38 @@ chat_model = ChatHuggingFace(llm=llm)
 
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled
 
-video_id = "6S59Y0ckTm4"
-api = YouTubeTranscriptApi()
+def fetch_transcript(video_id):
+    """Fetch transcript from YouTube video"""
+    api = YouTubeTranscriptApi()
+    
+    try:
+        transcript_list = api.fetch(video_id, languages=['en'])
 
-try:
-    transcript_list = api.fetch(video_id, languages=['en'])
+        # ✅ Timestamp-aware transcript storage
+        transcript_with_timestamps = []
 
-    # ✅ Timestamp-aware transcript storage
-    transcript_with_timestamps = []
+        for chunk in transcript_list:
+            transcript_with_timestamps.append({
+                "text": chunk.text,
+                "start": chunk.start,
+                "end": chunk.start + chunk.duration
+            })
 
-    for chunk in transcript_list:
-        transcript_with_timestamps.append({
-            "text": chunk.text,
-            "start": chunk.start,
-            "end": chunk.start + chunk.duration
-        })
+        # Optional: print sample
+        for item in transcript_with_timestamps[:10]:
+            print(
+                f"[{item['start']:.2f}s → {item['end']:.2f}s] {item['text']}"
+            )
+        
+        return transcript_with_timestamps
 
-    # Optional: print sample
-    for item in transcript_with_timestamps[:10]:
-        print(
-            f"[{item['start']:.2f}s → {item['end']:.2f}s] {item['text']}"
-        )
+    except TranscriptsDisabled:
+        print("No captions available for this video.")
+        return None
 
-except TranscriptsDisabled:
-    print("No captions available for this video.")
-
-except Exception as e:
-    print(f"An error occurred: {e}")
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return None
 
 """## Step 1b - Indexing (Text Splitting)"""
 
@@ -82,88 +96,75 @@ from langchain_core.documents import Document
 CHUNK_CHAR_LIMIT = 800
 CHUNK_OVERLAP = 200
 
-documents = []
+def create_documents_from_transcript(transcript_with_timestamps):
+    """Create documents with timestamps from transcript"""
+    documents = []
 
-current_text = ""
-current_start = None
+    current_text = ""
+    current_start = None
 
-for item in transcript_with_timestamps:
-    # initialize start time for a new chunk
-    if current_start is None:
-        current_start = item["start"]
+    for item in transcript_with_timestamps:
+        # initialize start time for a new chunk
+        if current_start is None:
+            current_start = item["start"]
 
-    current_text += " " + item["text"]
+        current_text += " " + item["text"]
 
-    # when chunk size reached → create document
-    if len(current_text) >= CHUNK_CHAR_LIMIT:
+        # when chunk size reached → create document
+        if len(current_text) >= CHUNK_CHAR_LIMIT:
+            documents.append(
+                Document(
+                    page_content=current_text.strip(),
+                    metadata={
+                        "start": current_start,
+                        "end": item["end"]
+                    }
+                )
+            )
+
+            # keep overlap text for next chunk
+            current_text = current_text[-CHUNK_OVERLAP:]
+            current_start = item["start"]
+
+    # handle remaining text
+    if current_text.strip():
         documents.append(
             Document(
                 page_content=current_text.strip(),
                 metadata={
                     "start": current_start,
-                    "end": item["end"]
+                    "end": transcript_with_timestamps[-1]["end"]
                 }
             )
         )
 
-        # keep overlap text for next chunk
-        current_text = current_text[-CHUNK_OVERLAP:]
-        current_start = item["start"]
-
-# handle remaining text
-if current_text.strip():
-    documents.append(
-        Document(
-            page_content=current_text.strip(),
-            metadata={
-                "start": current_start,
-                "end": transcript_with_timestamps[-1]["end"]
-            }
-        )
-    )
-
-print(f"Total chunks created: {len(documents)}")
-print("Sample chunk:")
-print(documents[0])
-
-len(documents)
-
-documents[35]
+    print(f"Total chunks created: {len(documents)}")
+    return documents
 
 """## Step 1c & 1d - Indexing (Embedding Generation and Storing in Vector Store)"""
 
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 
-embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-vector_store = FAISS.from_documents(documents, embeddings)
-
-vector_store.index_to_docstore_id
-
-vector_store.get_by_ids(['16b4f20f-392c-46a4-b9bd-3634d769aa00'])
+def create_vector_store(documents):
+    """Create FAISS vector store from documents"""
+    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    vector_store = FAISS.from_documents(documents, embeddings)
+    return vector_store
 
 """## Step 2 - Retrieval"""
 
-retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 4})
-
-retriever
-
-retriever.invoke('explain how many models Quantization')
+def create_retriever(vector_store):
+    """Create retriever from vector store"""
+    retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 4})
+    return retriever
 
 """## Step 3 - Augmentation"""
 
-from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
-llm = HuggingFaceEndpoint(
-    repo_id="google/gemma-2-2b-it",
-    task="text-generation",
-    max_new_tokens=512,
-    temperature=0.7,
-)
-
-chat_model = ChatHuggingFace(llm=llm)
-
-prompt = PromptTemplate(
-    template="""
+def create_prompt():
+    """Create the prompt template for video analysis"""
+    prompt = PromptTemplate(
+        template="""
 You are a video transcript analysis assistant.
 
 Answer STRICTLY using the transcript context below.
@@ -189,55 +190,71 @@ Transcript context:
 Question:
 {question}
 """,
-    input_variables=["context", "question"]
-)
-
-question          = "is the topic about plastic is discussed ?"
-retrieved_docs    = retriever.invoke(question)
-
-retrieved_docs
-
-context_text = "\n\n".join(
-    f"[Timestamp: {seconds_to_timestamp(doc.metadata['start'])} "
-    f"to {seconds_to_timestamp(doc.metadata['end'])}]\n"
-    f"{doc.page_content}"
-    for doc in retrieved_docs
-)
-context_text
-
-final_prompt = prompt.invoke({"context": context_text, "question": question})
-
-final_prompt
+        input_variables=["context", "question"]
+    )
+    return prompt
 
 """## Step 4 - Generation"""
 
-final_prompt = prompt.format(
-    context=context_text,
-    question=question
-)
-
-answer = chat_model.invoke(final_prompt)
-print(answer.content)
-
-"""## Building a Chain"""
+def format_docs(retrieved_docs):
+    """Format retrieved documents into context string with timestamps"""
+    def seconds_to_timestamp(seconds):
+        minutes = int(seconds // 60)
+        secs = int(seconds % 60)
+        return f"{minutes:02d}:{secs:02d}"
+    
+    context_text = "\n\n".join(
+        f"[Timestamp: {seconds_to_timestamp(doc.metadata['start'])} "
+        f"to {seconds_to_timestamp(doc.metadata['end'])}]\n"
+        f"{doc.page_content}"
+        for doc in retrieved_docs
+    )
+    return context_text
 
 from langchain_core.runnables import RunnableParallel, RunnablePassthrough, RunnableLambda
 from langchain_core.output_parsers import StrOutputParser
 
-def format_docs(retrieved_docs):
-  context_text = "\n\n".join(doc.page_content for doc in retrieved_docs)
-  return context_text
+def create_rag_chain(retriever, prompt, chat_model):
+    """Create the complete RAG chain"""
+    parallel_chain = RunnableParallel({
+        'context': retriever | RunnableLambda(format_docs),
+        'question': RunnablePassthrough()
+    })
+    
+    parser = StrOutputParser()
+    main_chain = parallel_chain | prompt | chat_model | parser
+    return main_chain
 
-parallel_chain = RunnableParallel({
-    'context': retriever | RunnableLambda(format_docs),
-    'question': RunnablePassthrough()
-})
+def answer_question(main_chain, question):
+    """Answer a question using the RAG chain"""
+    answer = main_chain.invoke(question)
+    return answer
 
-parallel_chain.invoke('is topic about plastic is discussed')
-
-parser = StrOutputParser()
-
-main_chain = parallel_chain | prompt | chat_model | parser
-
-main_chain.invoke('is topic is about the mobile')
-
+if __name__ == "__main__":
+    # Example usage
+    video_id = "6S59Y0ckTm4"
+    
+    # Fetch transcript
+    transcript = fetch_transcript(video_id)
+    
+    if transcript:
+        # Create documents
+        documents = create_documents_from_transcript(transcript)
+        
+        # Create vector store
+        vector_store = create_vector_store(documents)
+        
+        # Create retriever
+        retriever = create_retriever(vector_store)
+        
+        # Create prompt
+        prompt = create_prompt()
+        
+        # Create RAG chain
+        main_chain = create_rag_chain(retriever, prompt, chat_model)
+        
+        # Answer a question
+        question = "is the topic about plastic discussed?"
+        answer = answer_question(main_chain, question)
+        print(f"\nQuestion: {question}")
+        print(f"Answer: {answer}")
