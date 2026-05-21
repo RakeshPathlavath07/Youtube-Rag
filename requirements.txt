@@ -1,15 +1,12 @@
+cat > requirements.txt << 'EOF'
 streamlit==1.28.1
 langchain==0.1.10
-langchain-openai==0.1.3
-langchain-huggingface==0.0.6
-langchain-community==0.1.20
-langchain-text-splitters==0.0.1
 youtube-transcript-api==0.6.2
-faiss-cpu==1.7.4
-sentence-transformers==2.2.2
-huggingface-hub==0.20.3
 python-dotenv==1.0.0
-tiktoken==0.5.2
-openai==1.3.9
-pydantic==2.5.0
-requests==2.31.0
+faiss-cpu==1.7.4
+transformers==4.35.0
+torch==2.0.1
+numpy==1.24.3
+langchain-community==0.0.10
+sentence-transformers==2.2.2
+EOF
